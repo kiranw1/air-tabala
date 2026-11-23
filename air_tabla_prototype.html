@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#111827">
+<title>Air Tabla</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#151d31;--ink:#f8fafc;--muted:#aab6cc;--accent:#f5b942}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 50% 0,#1c2944,var(--bg) 65%);color:var(--ink);font:15px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}
+header{padding:18px 18px 10px;text-align:center}h1{margin:0;font-size:27px;letter-spacing:.04em}header p{margin:5px 0;color:var(--muted);font-size:13px}
+main{max-width:850px;margin:auto;padding:8px 12px 24px}.stage{position:relative;width:100%;aspect-ratio:4/3;max-height:68vh;background:#070b14;border:1px solid #34415d;border-radius:20px;overflow:hidden;box-shadow:0 18px 50px #0008}
+video,canvas{position:absolute;width:100%;height:100%;inset:0;object-fit:cover;transform:scaleX(-1)}canvas{pointer-events:none}
+.pad{position:absolute;top:52%;width:29%;aspect-ratio:1;border-radius:50%;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;flex-direction:column;border:3px solid #ffffffa8;background:radial-gradient(circle,#dba94d35,#dba94d0c 68%);box-shadow:0 0 0 8px #ffffff0a,inset 0 0 35px #f5b94220;transition:background .06s,box-shadow .06s}
+.pad.left{left:27%}.pad.right{left:73%}.pad strong{font-size:clamp(17px,4vw,26px);text-shadow:0 2px 8px #000}.pad small{color:#e5d4b3;font-size:12px;margin-top:3px}
+.pad.hit{background:radial-gradient(circle,#ffd36d99,#f5b94224 72%);box-shadow:0 0 0 12px #f5b94225,0 0 35px #ffc34d,inset 0 0 35px #fff8}
+.hud{display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap;margin:12px 2px}
+button{border:0;border-radius:12px;padding:12px 16px;background:var(--accent);color:#211805;font-weight:750;font-size:15px;cursor:pointer}
+button.secondary{background:#293650;color:var(--ink);border:1px solid #485775}button:disabled{opacity:.55}
+.status{color:var(--muted);font-size:13px;flex:1;min-width:150px}
+.panel{background:var(--panel);border:1px solid #2d3a54;border-radius:16px;padding:14px;margin-top:12px}
+.panel h2{font-size:15px;margin:0 0 8px}.panel p{margin:5px 0;color:var(--muted);font-size:13px;line-height:1.5}
+.stats{display:flex;gap:10px}.stat{flex:1;background:#0d1527;border-radius:12px;padding:10px;text-align:center}.stat b{display:block;font-size:21px}.stat span{color:var(--muted);font-size:11px}
+.controls{display:flex;gap:8px;flex-wrap:wrap}.controls label{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:13px}
+input[type=range]{width:105px;accent-color:var(--accent)}
+#permission{padding:10px;color:#ffd98c;font-size:13px;text-align:center}
+footer{text-align:center;color:#8290a8;font-size:11px;padding:12px}
+@media(max-width:480px){header{padding-top:12px}.stage{aspect-ratio:3/4;max-height:62vh}.pad{width:35%;top:62%}.pad.left{left:27%}.pad.right{left:73%}.pad strong{font-size:18px}}
+</style>
+</head>
+<body>
+<header><h1>🥁 AIR TABLA</h1><p>Play two virtual drums with your hands — no touching required</p></header>
+<main>
+ <div class="stage" id="stage">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="overlay"></canvas>
+  <div class="pad left" id="bayan"><strong>BAYAN</strong><small>Bass · left</small></div>
+  <div class="pad right" id="dayan"><strong>DAYAN</strong><small>Treble · right</small></div>
+ </div>
+ <div id="permission">Tap Start camera. Allow camera access when your browser asks.</div>
+ <div class="hud"><button id="start">Start camera</button><button id="stop" class="secondary" disabled>Stop</button><span class="status" id="status">Camera is off</span></div>
+ <div class="panel">
+  <h2>Playing controls</h2>
+  <div class="controls">
+   <label><input id="sound" type="checkbox" checked> Sound on</label>
+   <label>Sensitivity <input id="sensitivity" type="range" min="1" max="10" value="5"><span id="sensval">5</span></label>
+  </div>
+  <p>Move a fingertip into a circle and make a small downward/tapping motion. You can also move your palm into a circle. Keep your hands visible and about an arm's length from the camera.</p>
+ </div>
+ <div class="panel">
+  <h2>Session</h2><div class="stats"><div class="stat"><b id="hits">0</b><span>BEATS</span></div><div class="stat"><b id="bayanCount">0</b><span>BAYAN</span></div><div class="stat"><b id="dayanCount">0</b><span>DAYAN</span></div></div>
+  <p id="hint">Tip: The left virtual drum gives a low bass tone; the right gives a brighter treble tone.</p>
+ </div>
+ <footer>Prototype runs in your browser. Camera frames are processed on-device and are not recorded or uploaded by this page.</footer>
+</main>
+<script type="module">
+import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+const video=document.querySelector('#video'), canvas=document.querySelector('#overlay'), ctx=canvas.getContext('2d');
+const statusEl=document.querySelector('#status'), permission=document.querySelector('#permission');
+const startBtn=document.querySelector('#start'),stopBtn=document.querySelector('#stop');
+const pads=[document.querySelector('#bayan'),document.querySelector('#dayan')];
+let stream=null,landmarker=null,running=false,lastVideoTime=-1,lastHit=[0,0],wasInside=[false,false],prevTips=new Map(),audioCtx=null;
+let total=0,counts=[0,0];
+const $=id=>document.getElementById(id);
+$('sensitivity').addEventListener('input',e=>$('sensval').textContent=e.target.value);
+function audio(){if(!audioCtx)audioCtx=new (window.AudioContext||window.webkitAudioContext)();if(audioCtx.state==='suspended')audioCtx.resume();return audioCtx}
+function play(which){
+ if(!$('sound').checked)return;
+ const ac=audio(),now=ac.currentTime;
+ if(which===0){
+  const osc=ac.createOscillator(),gain=ac.createGain();osc.type='sine';osc.frequency.setValueAtTime(125,now);osc.frequency.exponentialRampToValueAtTime(58,now+.18);
+  gain.gain.setValueAtTime(.0001,now);gain.gain.exponentialRampToValueAtTime(.8,now+.008);gain.gain.exponentialRampToValueAtTime(.0001,now+.32);
+  osc.connect(gain);gain.connect(ac.destination);osc.start(now);osc.stop(now+.34);
+ }else{
+  const osc=ac.createOscillator(),gain=ac.createGain(),filter=ac.createBiquadFilter();osc.type='triangle';osc.frequency.setValueAtTime(520,now);osc.frequency.exponentialRampToValueAtTime(230,now+.11);
+  filter.type='lowpass';filter.frequency.value=1800;gain.gain.setValueAtTime(.0001,now);gain.gain.exponentialRampToValueAtTime(.45,now+.004);gain.gain.exponentialRampToValueAtTime(.0001,now+.16);
+  osc.connect(filter);filter.connect(gain);gain.connect(ac.destination);osc.start(now);osc.stop(now+.18);
+ }
+}
+function hit(i){
+ const now=performance.now();if(now-lastHit[i]<260)return;lastHit[i]=now;total++;counts[i]++;
+ $('hits').textContent=total;$('bayanCount').textContent=counts[0];$('dayanCount').textContent=counts[1];
+ pads[i].classList.add('hit');setTimeout(()=>pads[i].classList.remove('hit'),130);play(i);
+}
+function padCenter(i){const r=pads[i].getBoundingClientRect(),s=canvas.getBoundingClientRect();return {x:(r.left+r.width/2-s.left)/s.width,y:(r.top+r.height/2-s.top)/s.height,r:(r.width*.48)/s.width}}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+function draw(results){
+ const w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);
+ if(!results.landmarks)return;
+ const sensitivity=Number($('sensitivity').value);
+ const threshold=.105+(10-sensitivity)*.006;
+ const centers=[padCenter(0),padCenter(1)];
+ for(let hi=0;hi<results.landmarks.length;hi++){
+  const lm=results.landmarks[hi],tips=[4,8,12,16,20],palm=lm[9];
+  const points=tips.map((id)=>({x:lm[id].x,y:lm[id].y,id}));
+  // Show tracked fingertips and palm center.
+  ctx.fillStyle='#7cf5d0';for(const p of points){ctx.beginPath();ctx.arc(p.x*w,p.y*h,7,0,Math.PI*2);ctx.fill()}
+  ctx.strokeStyle='#7cf5d0';ctx.lineWidth=3;ctx.beginPath();ctx.arc(palm.x*w,palm.y*h,9,0,Math.PI*2);ctx.stroke();
+  for(let i=0;i<2;i++){
+   const c=centers[i];let inside=false,fast=false;
+   for(const p of points){
+    const key=hi+'-'+p.id,old=prevTips.get(key);const d=dist(p,c);
+    if(d<c.r+threshold){inside=true;if(old&&old.y-p.y>.012)fast=true}
+    prevTips.set(key,{x:p.x,y:p.y});
+   }
+   // Palm movement is a second interaction mode; entering the pad zone triggers it.
+   const palmInside=dist({x:palm.x,y:palm.y},c)<c.r*.72;
+   const active=inside||palmInside;
+   if(active&&(!wasInside[i]||fast))hit(i);
+   wasInside[i]=active;
+  }
+ }
+}
+async function loop(){
+ if(!running)return;
+ if(video.readyState>=2&&video.currentTime!==lastVideoTime){
+  lastVideoTime=video.currentTime;
+  const result=landmarker.detectForVideo(video,performance.now());draw(result);
+ }
+ requestAnimationFrame(loop);
+}
+async function begin(){
+ try{
+  startBtn.disabled=true;statusEl.textContent='Loading hand tracking…';permission.textContent='Starting camera and hand tracking…';
+  audio();
+  const vision=await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+  landmarker=await HandLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',delegate:'GPU'},runningMode:'VIDEO',numHands:2});
+  stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:'user',width:{ideal:1280},height:{ideal:720}}});
+  video.srcObject=stream;await video.play();
+  canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+  running=true;stopBtn.disabled=false;statusEl.textContent='Camera on · show both hands';permission.textContent='Hands detected on your screen. Try tapping either circle in the air.';loop();
+ }catch(err){
+  console.error(err);statusEl.textContent='Could not start camera';permission.textContent='Check camera permission and internet connection, then try again. Use HTTPS or localhost.';startBtn.disabled=false;
+ }
+}
+function stop(){
+ running=false;if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;video.srcObject=null;
+ if(landmarker){landmarker.close();landmarker=null}
+ ctx.clearRect(0,0,canvas.width,canvas.height);statusEl.textContent='Camera is off';permission.textContent='Tap Start camera when you are ready.';startBtn.disabled=false;stopBtn.disabled=true;wasInside=[false,false];prevTips.clear();
+}
+startBtn.addEventListener('click',begin);stopBtn.addEventListener('click',stop);
+window.addEventListener('pagehide',stop);
+if(!navigator.mediaDevices?.getUserMedia){permission.textContent='This browser does not support camera access. Open in an up-to-date Chrome browser over HTTPS.';startBtn.disabled=true}
+</script>
+</body></html>
